@@ -7,7 +7,7 @@ public interface CustomerProductService {
 
     ResponseEntity<?> viewProduct(UUID productId);
 
-    ResponseEntity<?> viewAllProducts(UUID categoryId, int max, int offset,
+    ResponseEntity<?> viewAllProducts(UUID categoryId, String query, int max, int offset,
                                       String sortBy, String order);
 
     ResponseEntity<?> viewSimilarProducts(UUID productId, int max, int offset,

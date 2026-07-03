@@ -8,7 +8,6 @@ import com.example.TTN_E_Commerce.Repository.*;
 import com.example.TTN_E_Commerce.Service.services.SellerProductService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -24,7 +23,6 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 public class SellerProductServiceImpl implements SellerProductService {
 
     private final ProductRepository productRepository;
@@ -34,6 +32,22 @@ public class SellerProductServiceImpl implements SellerProductService {
     private final CategoryMetadataFieldValuesRepository fieldValuesRepository;
     private final ObjectMapper objectMapper;
     private final EmailService emailService;
+
+    public SellerProductServiceImpl(ProductRepository productRepository,
+                                    ProductVariationRepository productVariationRepository,
+                                    CategoryRepository categoryRepository,
+                                    SellerRepository sellerRepository,
+                                    CategoryMetadataFieldValuesRepository fieldValuesRepository,
+                                    ObjectMapper objectMapper,
+                                    EmailService emailService) {
+        this.productRepository = productRepository;
+        this.productVariationRepository = productVariationRepository;
+        this.categoryRepository = categoryRepository;
+        this.sellerRepository = sellerRepository;
+        this.fieldValuesRepository = fieldValuesRepository;
+        this.objectMapper = objectMapper;
+        this.emailService = emailService;
+    }
 
     private static final List<String> ALLOWED_IMAGE_TYPES =
             List.of("image/jpeg", "image/jpg", "image/png", "image/bmp");
@@ -57,20 +71,36 @@ public class SellerProductServiceImpl implements SellerProductService {
                 .orElseThrow(() -> new NotFoundException("Seller not found"));
     }
 
+    private String buildImagePath(UUID productId, String fileName) {
+        if (fileName == null) return null;
+        if (fileName.startsWith("http://") || fileName.startsWith("https://") ||
+            fileName.startsWith("http:/") || fileName.startsWith("https:/")) {
+            return fileName;
+        }
+        String baseUrl;
+        try {
+            baseUrl = org.springframework.web.servlet.support.ServletUriComponentsBuilder.fromCurrentContextPath().build().toUriString();
+        } catch (Exception e) {
+            baseUrl = "http://localhost:8080";
+        }
+        return baseUrl + "/uploads/products/" + productId + "/variations/" + fileName;
+    }
+
     private String savePrimaryImage(MultipartFile file,
                                     UUID productId,
                                     UUID variationId) throws IOException {
         validateImageFile(file);
-
-        String ext= getExtension(file.getOriginalFilename());
-        String fileName = variationId + ext;
         Path dir = Paths.get(uploadBaseDir, "products", productId.toString(), "variations");
         Files.createDirectories(dir);
+        String ext = getExtension(file.getOriginalFilename());
+        String fileName = variationId + "_primary" + ext;
         Files.copy(file.getInputStream(), dir.resolve(fileName), StandardCopyOption.REPLACE_EXISTING);
         return fileName;
     }
 
-    private void saveSecondaryImages(MultipartFile[] files, UUID productId, UUID variationId) throws IOException {
+    private List<String> saveSecondaryImages(MultipartFile[] files, UUID productId, UUID variationId) throws IOException {
+        List<String> fileNames = new ArrayList<>();
+        if (files == null) return fileNames;
         Path dir = Paths.get(uploadBaseDir, "products", productId.toString(), "variations");
         Files.createDirectories(dir);
 
@@ -83,17 +113,25 @@ public class SellerProductServiceImpl implements SellerProductService {
             String ext = getExtension(file.getOriginalFilename());
             String fileName = variationId + "_" + (i + 1) + ext;
             Files.copy(file.getInputStream(), dir.resolve(fileName), StandardCopyOption.REPLACE_EXISTING);
+            fileNames.add(fileName);
         }
+        return fileNames;
     }
 
-    private List<String> getSecondaryImagePaths(UUID productId, UUID variationId) {
-        Path dir = Paths.get(uploadBaseDir, "products", productId.toString(), "variations");
+    private List<String> getSecondaryImagePaths(ProductVariation v) {
+        List<String> dbImages = v.getSecondaryImages();
+        if (dbImages != null && !dbImages.isEmpty()) {
+            return dbImages.stream()
+                    .map(img -> buildImagePath(v.getProduct().getId(), img))
+                    .collect(Collectors.toList());
+        }
+        Path dir = Paths.get(uploadBaseDir, "products", v.getProduct().getId().toString(), "variations");
         if (!Files.exists(dir)) return Collections.emptyList();
         try {
             return Files.list(dir)
                     .filter(p -> p.getFileName().toString()
-                            .matches(variationId + "_\\d+\\.(jpg|jpeg|png|bmp)"))
-                    .map(p -> p.toString().replace("\\", "/"))
+                            .matches(v.getId() + "_\\d+\\.(jpg|jpeg|png|bmp)"))
+                    .map(p -> buildImagePath(v.getProduct().getId(), p.getFileName().toString()))
                     .sorted()
                     .collect(Collectors.toList());
         } catch (IOException e) {
@@ -192,8 +230,8 @@ public class SellerProductServiceImpl implements SellerProductService {
         product.setDescription(dto.getDescription());
         product.setCategory(category);
         product.setSeller(seller);
-        product.setIsCancellable(dto.getIsCancellable() != null ? dto.getIsCancellable() : false);
-        product.setIsReturnable(dto.getIsReturnable()   != null ? dto.getIsReturnable()  : false);
+        product.setIsCancellable(dto.getIsCancellable() != null ? dto.getIsCancellable() : Boolean.FALSE);
+        product.setIsReturnable(dto.getIsReturnable()   != null ? dto.getIsReturnable()  : Boolean.FALSE);
         product.setIsActive(false);
         product.setIsDeleted(false);
 
@@ -279,14 +317,16 @@ public class SellerProductServiceImpl implements SellerProductService {
 
         if (secondaryImages != null && secondaryImages.length > 0) {
             try {
-                saveSecondaryImages(secondaryImages, product.getId(), variation.getId());
+                List<String> secondaryUrls = saveSecondaryImages(secondaryImages, product.getId(), variation.getId());
+                variation.setSecondaryImages(secondaryUrls);
+                productVariationRepository.save(variation);
             } catch (IOException e) {
                 throw new CustomBadRequestException("Failed to save secondary images: " + e.getMessage());
             }
         }
 
         List<String> secondaryPaths =
-                getSecondaryImagePaths(product.getId(), variation.getId());
+                getSecondaryImagePaths(variation);
 
         Map<String, Object> data = new HashMap<>();
         data.put("id",                variation.getId());
@@ -296,8 +336,8 @@ public class SellerProductServiceImpl implements SellerProductService {
         data.put("quantityAvailable", variation.getQuantityAvailable());
         data.put("metadata",          dto.getMetadata());
         data.put("isActive",          variation.getIsActive());
-        data.put("primaryImage",      variation.getPrimaryImageName());  // from DB
-        data.put("secondaryImages",   secondaryPaths);                   // computed from disk
+        data.put("primaryImage",      buildImagePath(product.getId(), variation.getPrimaryImageName()));
+        data.put("secondaryImages",   secondaryPaths);
 
         return ResponseEntity.ok(new ApiResponse("Product variation added successfully", data));
     }
@@ -545,7 +585,8 @@ public class SellerProductServiceImpl implements SellerProductService {
         if (secondaryImages != null && secondaryImages.length > 0) {
             deleteOldSecondaryImages(product.getId(), variationId);
             try {
-                saveSecondaryImages(secondaryImages, product.getId(), variationId);
+                List<String> secondaryUrls = saveSecondaryImages(secondaryImages, product.getId(), variationId);
+                variation.setSecondaryImages(secondaryUrls);
             } catch (IOException e) {
                 throw new CustomBadRequestException(
                         "Failed to save secondary images: " + e.getMessage());
@@ -561,9 +602,9 @@ public class SellerProductServiceImpl implements SellerProductService {
             } catch (JsonProcessingException ignored) {}
         }
 
-        // Compute secondary image paths from disk (no DB needed)
+        // Compute secondary image paths
         List<String> secondaryPaths =
-                getSecondaryImagePaths(product.getId(), variationId);
+                getSecondaryImagePaths(variation);
 
         Map<String, Object> data = new HashMap<>();
         data.put("id",                variation.getId());
@@ -573,8 +614,8 @@ public class SellerProductServiceImpl implements SellerProductService {
         data.put("quantityAvailable", variation.getQuantityAvailable());
         data.put("isActive",          variation.getIsActive());
         data.put("metadata",          metadataMap);
-        data.put("primaryImage",      variation.getPrimaryImageName());  // from DB
-        data.put("secondaryImages",   secondaryPaths);                   // computed from disk
+        data.put("primaryImage",      buildImagePath(product.getId(), variation.getPrimaryImageName()));
+        data.put("secondaryImages",   secondaryPaths);
 
         return ResponseEntity.ok(new ApiResponse("Product variation updated successfully", data));
     }
@@ -603,9 +644,8 @@ public class SellerProductServiceImpl implements SellerProductService {
         map.put("price",             v.getPrice());
         map.put("quantityAvailable", v.getQuantityAvailable());
         map.put("isActive",          v.getIsActive());
-        map.put("primaryImage",      v.getPrimaryImageName());
-        map.put("secondaryImages",
-                getSecondaryImagePaths(v.getProduct().getId(), v.getId()));
+        map.put("primaryImage",      buildImagePath(v.getProduct().getId(), v.getPrimaryImageName()));
+        map.put("secondaryImages",   getSecondaryImagePaths(v));
 
         if (v.getMetadata() != null) {
             try {

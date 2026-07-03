@@ -13,9 +13,7 @@ import com.example.TTN_E_Commerce.Repository.ProductVariationRepository;
 import com.example.TTN_E_Commerce.Repository.SellerRepository;
 import com.example.TTN_E_Commerce.Service.services.AdminProductService;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -31,7 +29,6 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 public class AdminProductServiceImpl implements AdminProductService {
 
     private final ProductRepository          productRepository;
@@ -40,6 +37,20 @@ public class AdminProductServiceImpl implements AdminProductService {
     private final CategoryRepository         categoryRepository;
     private final EmailService               emailService;
     private final ObjectMapper               objectMapper;
+
+    public AdminProductServiceImpl(ProductRepository productRepository,
+                                   ProductVariationRepository productVariationRepository,
+                                   SellerRepository sellerRepository,
+                                   CategoryRepository categoryRepository,
+                                   EmailService emailService,
+                                   ObjectMapper objectMapper) {
+        this.productRepository = productRepository;
+        this.productVariationRepository = productVariationRepository;
+        this.sellerRepository = sellerRepository;
+        this.categoryRepository = categoryRepository;
+        this.emailService = emailService;
+        this.objectMapper = objectMapper;
+    }
 
     private static final List<String> ALLOWED_SORT_FIELDS = List.of("id", "name", "brand");
     @Value("${file.upload-dir:uploads}")
@@ -140,16 +151,33 @@ public class AdminProductServiceImpl implements AdminProductService {
         }
         map.put("primaryImage", v.getPrimaryImageName() != null
                 ? buildImagePath(productId, v.getPrimaryImageName()) : null);
-        map.put("secondaryImages", getSecondaryImagePaths(productId, v.getId()));
+        map.put("secondaryImages", getSecondaryImagePaths(productId, v));
 
         return map;
     }
     private String buildImagePath(UUID productId, String fileName)
     {
-        return uploadBaseDir+"/products/"+ productId+ "/variations/"+ fileName;
+        if (fileName == null) return null;
+        if (fileName.startsWith("http://") || fileName.startsWith("https://") ||
+            fileName.startsWith("http:/") || fileName.startsWith("https:/")) {
+            return fileName;
+        }
+        String baseUrl;
+        try {
+            baseUrl = org.springframework.web.servlet.support.ServletUriComponentsBuilder.fromCurrentContextPath().build().toUriString();
+        } catch (Exception e) {
+            baseUrl = "http://localhost:8080";
+        }
+        return baseUrl + "/uploads/products/"+ productId+ "/variations/"+ fileName;
     }
-    private List<String> getSecondaryImagePaths(UUID productId, UUID variationId)
+    private List<String> getSecondaryImagePaths(UUID productId, ProductVariation v)
     {
+        List<String> dbImages = v.getSecondaryImages();
+        if (dbImages != null && !dbImages.isEmpty()) {
+            return dbImages.stream()
+                    .map(img -> buildImagePath(productId, img))
+                    .collect(Collectors.toList());
+        }
         Path dir = Paths.get(uploadBaseDir,"products",productId.toString(),"variations");
         if(!Files.exists(dir))
         {
@@ -158,8 +186,8 @@ public class AdminProductServiceImpl implements AdminProductService {
         try {
             return Files.list(dir)
                     .filter(p -> p.getFileName().toString()
-                            .matches(variationId + "_\\d+\\.(jpg|jpeg|png|bmp)"))
-                    .map(p -> p.toString().replace("\\", "/"))
+                            .matches(v.getId() + "_\\d+\\.(jpg|jpeg|png|bmp)"))
+                    .map(p -> buildImagePath(productId, p.getFileName().toString()))
                     .sorted()
                     .collect(Collectors.toList());
         } catch (IOException e) {

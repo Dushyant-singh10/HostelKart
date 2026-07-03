@@ -29,6 +29,23 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     @Query("SELECT p FROM Product p WHERE p.category.id IN :categoryIds AND p.isDeleted = false AND p.isActive = true")
     Page<Product> findActiveProductsByCategoryIds(@Param("categoryIds") List<UUID> categoryIds, Pageable pageable);
 
+    @Query("SELECT p FROM Product p WHERE p.category.id IN :categoryIds AND p.isDeleted = false AND p.isActive = true " +
+            "AND (:query IS NULL OR LOWER(p.name) LIKE %:query% OR LOWER(p.brand) LIKE %:query% OR LOWER(p.description) LIKE %:query% OR LOWER(p.category.name) LIKE %:query%)")
+    Page<Product> findActiveProductsByCategoryIdsAndQuery(
+            @Param("categoryIds") List<UUID> categoryIds, 
+            @Param("query") String query, 
+            Pageable pageable);
+
+    @Query("SELECT p FROM Product p WHERE p.isDeleted = false AND p.isActive = true " +
+            "AND (:sellerId   IS NULL OR p.seller.userId = :sellerId) " +
+            "AND (:categoryId IS NULL OR p.category.id  = :categoryId) " +
+            "AND (:query      IS NULL OR LOWER(p.name) LIKE %:query% OR LOWER(p.brand) LIKE %:query% OR LOWER(p.description) LIKE %:query% OR LOWER(p.category.name) LIKE %:query%)")
+    Page<Product> findAllActiveProductsWithFilterAndQuery(
+            @Param("sellerId")   UUID sellerId, 
+            @Param("categoryId") UUID categoryId, 
+            @Param("query")      String query, 
+            Pageable pageable);
+
     @Query("SELECT p FROM Product p WHERE p.category.id = :categoryId AND p.isDeleted = false AND p.isActive = true AND p.id != :excludeProductId")
     Page<Product> findSimilarProducts(@Param("categoryId") UUID categoryId, @Param("excludeProductId") UUID excludeProductId, Pageable pageable);
 

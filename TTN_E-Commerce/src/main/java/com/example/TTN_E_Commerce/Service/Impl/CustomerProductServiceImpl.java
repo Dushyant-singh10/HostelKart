@@ -12,7 +12,6 @@ import com.example.TTN_E_Commerce.Repository.ProductVariationRepository;
 import com.example.TTN_E_Commerce.Service.services.CustomerProductService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -26,7 +25,6 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 public class CustomerProductServiceImpl implements CustomerProductService
 {
     private final ProductRepository productRepository;
@@ -34,8 +32,17 @@ public class CustomerProductServiceImpl implements CustomerProductService
     private final ObjectMapper objectMapper;
     private final CategoryRepository categoryRepository;
 
+    public CustomerProductServiceImpl(ProductRepository productRepository,
+                                      ProductVariationRepository productVariationRepository,
+                                      ObjectMapper objectMapper,
+                                      CategoryRepository categoryRepository) {
+        this.productRepository = productRepository;
+        this.productVariationRepository = productVariationRepository;
+        this.objectMapper = objectMapper;
+        this.categoryRepository = categoryRepository;
+    }
+
     private static final List<String> ALLOWED_SORT_FIELDS = List.of("id", "name", "brand");
-    private static final List<String> ALLOWED_VARIATION_SORT_FIELDS = List.of("id", "price", "quantityAvailable");
 
     @Value("${file.upload-dir:uploads}")
     private String uploadBaseDir;
@@ -58,7 +65,7 @@ public class CustomerProductServiceImpl implements CustomerProductService
     }
 
     @Override
-    public ResponseEntity<?> viewAllProducts(UUID categoryId, int max, int offset,
+    public ResponseEntity<?> viewAllProducts(UUID categoryId, String query, int max, int offset,
                                              String sortBy, String order) {
 
         if (!ALLOWED_SORT_FIELDS.contains(sortBy)) {
@@ -66,22 +73,37 @@ public class CustomerProductServiceImpl implements CustomerProductService
                     "Invalid sort field. Allowed: " + ALLOWED_SORT_FIELDS);
         }
 
-        Category category = categoryRepository.findById(categoryId)
-                .orElseThrow(() -> new NotFoundException(
-                        "Category not found with id: " + categoryId));
-
-        List<UUID> categoryIds = new ArrayList<>();
-        categoryIds.add(categoryId);
-
-        boolean isLeaf = categoryRepository.findByParentCategoryId(categoryId).isEmpty();
-        if (!isLeaf) {
-            collectAllDescendantIds(categoryId, categoryIds);
-        }
-
         Sort sort = order.equalsIgnoreCase("desc") ? Sort.by(sortBy).descending() : Sort.by(sortBy).ascending();
 
-        Page<Product> page = productRepository.findActiveProductsByCategoryIds(
-                categoryIds, PageRequest.of(offset, max, sort));
+        Page<Product> page;
+        Category category = null;
+        boolean isLeaf = true;
+        String queryParam = (query == null || query.isBlank()) ? null : query.toLowerCase();
+
+        if (categoryId != null) {
+            category = categoryRepository.findById(categoryId)
+                    .orElseThrow(() -> new NotFoundException(
+                            "Category not found with id: " + categoryId));
+
+            List<UUID> categoryIds = new ArrayList<>();
+            categoryIds.add(categoryId);
+
+            isLeaf = categoryRepository.findByParentCategoryId(categoryId).isEmpty();
+            if (!isLeaf) {
+                collectAllDescendantIds(categoryId, categoryIds);
+            }
+
+            if (queryParam != null) {
+                page = productRepository.findActiveProductsByCategoryIdsAndQuery(
+                        categoryIds, queryParam, PageRequest.of(offset, max, sort));
+            } else {
+                page = productRepository.findActiveProductsByCategoryIds(
+                        categoryIds, PageRequest.of(offset, max, sort));
+            }
+        } else {
+            page = productRepository.findAllActiveProductsWithFilterAndQuery(
+                    null, null, queryParam, PageRequest.of(offset, max, sort));
+        }
 
         List<Map<String, Object>> result = page.getContent().stream()
                 .filter(p -> productVariationRepository.hasActiveVariations(p.getId()))
@@ -90,7 +112,7 @@ public class CustomerProductServiceImpl implements CustomerProductService
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("categoryId",    categoryId);
-        data.put("categoryName",  category.getName());
+        data.put("categoryName",  category != null ? category.getName() : "All Products");
         data.put("isLeaf",        isLeaf);
         data.put("totalElements", page.getTotalElements());
         data.put("totalPages",    page.getTotalPages());
@@ -187,23 +209,40 @@ public class CustomerProductServiceImpl implements CustomerProductService
         }
         map.put("primaryImage", v.getPrimaryImageName() != null ? buildImagePath(productId, v.getPrimaryImageName()) : null);
 
-        map.put("secondaryImages", getSecondaryImagePaths(productId, v.getId()));
+        map.put("secondaryImages", getSecondaryImagePaths(productId, v));
 
         return map;
     }
     private String buildImagePath(UUID productId, String fileName) {
-        return uploadBaseDir + "/products/" + productId + "/variations/" + fileName;
+        if (fileName == null) return null;
+        if (fileName.startsWith("http://") || fileName.startsWith("https://") ||
+            fileName.startsWith("http:/") || fileName.startsWith("https:/")) {
+            return fileName;
+        }
+        String baseUrl;
+        try {
+            baseUrl = org.springframework.web.servlet.support.ServletUriComponentsBuilder.fromCurrentContextPath().build().toUriString();
+        } catch (Exception e) {
+            baseUrl = "http://localhost:8080";
+        }
+        return baseUrl + "/uploads/products/" + productId + "/variations/" + fileName;
     }
 
-    private List<String> getSecondaryImagePaths(UUID productId, UUID variationId) {
+    private List<String> getSecondaryImagePaths(UUID productId, ProductVariation v) {
+        List<String> dbImages = v.getSecondaryImages();
+        if (dbImages != null && !dbImages.isEmpty()) {
+            return dbImages.stream()
+                    .map(img -> buildImagePath(productId, img))
+                    .collect(Collectors.toList());
+        }
         Path dir = Paths.get(uploadBaseDir, "products",
                 productId.toString(), "variations");
         if (!Files.exists(dir)) return Collections.emptyList();
         try {
             return Files.list(dir)
                     .filter(p -> p.getFileName().toString()
-                            .matches(variationId + "_\\d+\\.(jpg|jpeg|png|bmp)"))
-                    .map(p -> p.toString().replace("\\", "/"))
+                            .matches(v.getId() + "_\\d+\\.(jpg|jpeg|png|bmp)"))
+                    .map(p -> buildImagePath(productId, p.getFileName().toString()))
                     .sorted()
                     .collect(Collectors.toList());
         } catch (IOException e) {
