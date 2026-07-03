@@ -9,6 +9,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
 public class TtnECommerceApplication {
 
 	public static void main(String[] args) {
+		System.setProperty("java.net.preferIPv4Stack", "true");
 		SpringApplication.run(TtnECommerceApplication.class, args);
 	}
 
