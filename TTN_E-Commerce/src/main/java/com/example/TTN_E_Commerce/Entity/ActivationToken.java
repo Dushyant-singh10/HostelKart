@@ -1,5 +1,6 @@
 package com.example.TTN_E_Commerce.Entity;
 
+import com.example.TTN_E_Commerce.Enum.TokenType;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -16,7 +17,7 @@ public class ActivationToken {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false,unique = true)
+    @Column(nullable = false)
     String token;
 
     LocalDateTime expiryDate;
@@ -24,4 +25,9 @@ public class ActivationToken {
     @OneToOne
     @JoinColumn(name = "user_id",nullable = false)
     User user;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private TokenType tokenType = TokenType.SIGNUP;
 }
+

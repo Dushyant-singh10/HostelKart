@@ -2,6 +2,7 @@ package com.example.TTN_E_Commerce.Repository;
 
 import com.example.TTN_E_Commerce.Entity.ActivationToken;
 import com.example.TTN_E_Commerce.Entity.User;
+import com.example.TTN_E_Commerce.Enum.TokenType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -12,4 +13,5 @@ import java.util.UUID;
 public interface ActivationTokenRepository extends JpaRepository<ActivationToken, UUID> {
     Optional<ActivationToken> findByToken(String token);
     Optional<ActivationToken> findByUser(User user);
+    Optional<ActivationToken> findByUserAndTokenType(User user, TokenType tokenType);
 }

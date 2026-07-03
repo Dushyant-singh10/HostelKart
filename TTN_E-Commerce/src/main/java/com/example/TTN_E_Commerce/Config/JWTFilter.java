@@ -6,6 +6,7 @@ import com.example.TTN_E_Commerce.Repository.UserRepository;
 import com.example.TTN_E_Commerce.Service.Impl.JwtService;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -43,9 +44,12 @@ public class JWTFilter extends OncePerRequestFilter {
                 path.startsWith("/seller/register") ||
                 path.startsWith("/seller/login") ||
                 path.startsWith("/admin/login") ||
+                path.startsWith("/user/verify-login-otp") ||
+                path.startsWith("/user/resend-login-otp") ||
+                path.startsWith("/user/verify-signup-otp") ||
                 path.startsWith("/activate") ||
                 path.startsWith("/resendToken") ||
-                path.startsWith("/reset-passowrd") ||
+                path.startsWith("/reset-password") ||
                 path.startsWith("/forgot-password") ||
                 path.startsWith("/user/refreshAccessToken")) {
 
@@ -143,7 +147,7 @@ public class JWTFilter extends OncePerRequestFilter {
                         "Access token expired");
                 return;
 
-            } catch (Exception e) {
+            } catch (JwtException | IllegalArgumentException e) {
 
                 writeError(response,
                         HttpServletResponse.SC_UNAUTHORIZED,

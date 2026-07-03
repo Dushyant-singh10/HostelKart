@@ -4,7 +4,9 @@ import com.example.TTN_E_Commerce.DTO.*;
 import com.example.TTN_E_Commerce.Entity.*;
 import com.example.TTN_E_Commerce.Enum.AddressLabel;
 import com.example.TTN_E_Commerce.Enum.RoleType;
+import com.example.TTN_E_Commerce.Enum.TokenType;
 import com.example.TTN_E_Commerce.Enum.UserAddressLabel;
+import java.security.SecureRandom;
 import com.example.TTN_E_Commerce.Exception.CustomBadRequestException;
 import com.example.TTN_E_Commerce.Exception.NotFoundException;
 import com.example.TTN_E_Commerce.Repository.*;
@@ -78,15 +80,21 @@ public class CustomerService {
         customer.setContact(customerDTO.getContact());
         customerRepository.save(customer);
 
-        String token = UUID.randomUUID().toString();
+        SecureRandom random = new SecureRandom();
+        String otp = String.format("%06d", random.nextInt(900000) + 100000);
+
         ActivationToken activationToken = new ActivationToken();
-        activationToken.setToken(token);
+        activationToken.setToken(otp);
         activationToken.setUser(user);
-        activationToken.setExpiryDate(LocalDateTime.now().plusHours(24));
+        activationToken.setExpiryDate(LocalDateTime.now().plusMinutes(5));
+        activationToken.setTokenType(TokenType.SIGNUP);
 
         tokenRepository.save(activationToken);
-        emailService.sendActivationMail(customerDTO.getEmail(),token);
-        return ResponseEntity.ok().body("Registered successfully with Token : "+ token);
+        System.out.println("\n==================================================");
+        System.out.println("[OTP CODE] Signup OTP for " + customerDTO.getEmail() + " : " + otp);
+        System.out.println("==================================================\n");
+        emailService.sendActivationOtpMail(customerDTO.getEmail(), otp);
+        return ResponseEntity.ok(Map.of("message", "Registered successfully. Activation OTP sent to " + customerDTO.getEmail()));
     }
     public ResponseEntity<?> profile() {
         String email = (String) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
